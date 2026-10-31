@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mennyit termel?</title>
+  <meta name="description" content="Napelemes termelés-előrejelzés Magyarországra az időjárás-előrejelzés alapján">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☀️</text></svg>">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <span class="logo">☀️</span>
+      <div>
+        <h1>Mennyit termel?</h1>
+        <p>Napelemes termelés-előrejelzés a következő napokra</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel settings" aria-label="Beállítások">
+      <h2>1. Helyszín</h2>
+      <form id="locForm" class="row">
+        <input id="locInput" type="text" autocomplete="off"
+               placeholder="47.4979, 19.0402 · Google Maps link · településnév">
+        <button type="submit">Keresés</button>
+      </form>
+      <div id="locResults" class="loc-results"></div>
+      <div class="row small">
+        <button id="geoBtn" type="button" class="ghost">📍 Saját helyzetem</button>
+        <span id="locStatus" class="muted"></span>
+      </div>
+      <div id="map" aria-label="Térkép – kattints a helyszín kiválasztásához"></div>
+      <div class="grid2">
+        <label>Szélesség (lat)<input id="lat" type="number" step="0.0001" min="-90" max="90"></label>
+        <label>Hosszúság (lon)<input id="lon" type="number" step="0.0001" min="-180" max="180"></label>
+      </div>
+
+      <h2>2. Napelem mezők</h2>
+      <p class="hint">Ha a panelek több tetőfelületen vannak (pl. kelet–nyugat), adj hozzá külön mezőt mindegyikhez. Tájolás: 180° = dél, 90° = kelet, 270° = nyugat.</p>
+      <div id="arrays"></div>
+      <button id="addArray" type="button" class="ghost full">+ Új tetőfelület</button>
+
+      <h2>3. Inverter és veszteségek</h2>
+      <div class="grid2">
+        <label>Inverter AC teljesítmény (kW)<input id="invKw" type="number" min="0.1" step="0.1"></label>
+        <label>Inverter hatásfok (%)<input id="invEff" type="number" min="80" max="100" step="0.5"></label>
+        <label>Egyéb veszteség (%)<input id="loss" type="number" min="0" max="50" step="1"
+               title="Kábelezés, szennyeződés, árnyékolás, modul-eltérés, öregedés"></label>
+        <label>Hőfoktényező (%/°C)<input id="gamma" type="number" min="-1" max="0" step="0.01"></label>
+      </div>
+      <label>Előrejelzés hossza
+        <select id="days">
+          <option value="3">3 nap</option>
+          <option value="7">7 nap</option>
+          <option value="10">10 nap</option>
+          <option value="14">14 nap</option>
+          <option value="16">16 nap (maximum)</option>
+        </select>
+      </label>
+      <button id="calcBtn" type="button" class="primary full">Előrejelzés számítása</button>
+    </section>
+
+    <section class="results" aria-live="polite">
+      <div id="msg" class="msg" hidden></div>
+
+      <div id="kpis" class="kpis"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Napi várható termelés</h3>
+          <button id="csvBtn" type="button" class="ghost small-btn" disabled>CSV letöltés</button>
+        </div>
+        <div class="chart-box"><canvas id="dailyChart"></canvas></div>
+        <p class="hint">Kattints egy oszlopra az órás bontásért. A halványabb oszlopok távolabbi, bizonytalanabb előrejelzések.</p>
+      </div>
+
+      <div class="panel">
+        <h3 id="hourlyTitle">Órás bontás</h3>
+        <div class="chart-box"><canvas id="hourlyChart"></canvas></div>
+      </div>
+
+      <div class="panel table-panel">
+        <table id="dayTable">
+          <thead>
+            <tr>
+              <th>Nap</th><th>Időjárás</th><th class="num">Hőm.</th><th class="num">Napsütés</th>
+              <th class="num">Termelés</th><th class="num">Csúcs</th><th class="num">Levágás</th><th>Megbízhatóság</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <details class="panel method">
+        <summary>Hogyan számol?</summary>
+        <ul>
+          <li>Az időjárás-előrejelzést az <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> adja (ICON-D2/ICON-EU, ECMWF, GFS modellek legjobb kombinációja), legfeljebb 16 napra.</li>
+          <li>Minden tetőfelületre a megadott dőlésszögre és tájolásra számolt <em>ferde felületi globálsugárzást</em> (GTI) kérjük le óránként.</li>
+          <li>DC teljesítmény = kWp × GTI / 1000 W/m² × hőmérsékleti korrekció × (1 − veszteség). A cellahőmérséklet a Faiman-modellel számolva (léghőmérséklet, besugárzás, szél).</li>
+          <li>AC teljesítmény = DC × inverter hatásfok, de legfeljebb az inverter névleges teljesítménye (a többlet „levágás”).</li>
+          <li>Az órás átlagolás miatt a rövid felhőszakadások és a levágás pontos mértéke nem látszik. Árnyékolást, havat nem modellez.</li>
+          <li>Az első 2–3 nap előrejelzése a legpontosabb; 7 napon túl csak tájékoztató jellegű.</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    Időjárási adatok: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0) ·
+    Térkép: © <a href="https://www.esri.com/" target="_blank" rel="noopener">Esri</a>, © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
